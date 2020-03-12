@@ -25,10 +25,8 @@ The easiest pattern to create a dataset is:
     {0.0, 0.5}
     iex> Dataset.column_name(dataset, 0) # Get name of column by index
     "x"
-    iex> cat_col = Dataset.column_index(dataset, "category") # Get index of column by name
-    2
     iex> Enum.map(dataset.data, fn row -> # Enumerate values in a column
-    ...>    Dataset.value(row, cat_col)
+    ...>    Dataset.value(dataset, row, "category")
     ...> end)
     ["Hippo", "Turtle", "Turtle", "Rabbit"]
     iex> Dataset.unique_values(dataset, "category") # Extract unique values for legends etc.
@@ -48,9 +46,9 @@ the size of each array or tuple in the data. If there are any issues finding a v
 
   defstruct [:headers, :data, :title]
 
-  @type column_name() :: String.t() | integer()
+  @type column_name() :: String.t() | atom() | integer()
   @type column_type() :: :datetime | :number | :string | :unknown | nil
-  @type row() :: list() | tuple()
+  @type row() :: list() | tuple() | map()
   @type t() :: %__MODULE__{}
 
   @doc """
@@ -120,23 +118,49 @@ the size of each array or tuple in the data. If there are any issues finding a v
   This simply provides a consistent wrapper regardless of whether the data is represented in a tuple
   or a list.
   """
-  @spec value(row(), integer()) :: any
-  def value(row, column_index) when is_list(row) and is_integer(column_index), do: Enum.at(row, column_index, nil)
-  def value(row, column_index) when is_tuple(row) and is_integer(column_index) and column_index < tuple_size(row) do
-    elem(row, column_index)
+  @spec value(Contex.Dataset.t(), row(), column_name()) :: any
+  def value(%Dataset{}=dataset, row, column_name) do
+    accessor_fn = value_fn(dataset, column_name)
+    accessor_fn.(row)
   end
-  def value(_, _), do: nil
+  #def value(row, column_index) when is_list(row) and is_integer(column_index), do: Enum.at(row, column_index, nil)
+  #def value(row, column_index) when is_tuple(row) and is_integer(column_index) and column_index < tuple_size(row) do
+  #  elem(row, column_index)
+  #end
+  #def value(_, _), do: nil
+
+  @spec value_fn(Contex.Dataset.t(), column_name()) :: (row() -> any)
+  def value_fn(%Dataset{data: [first_row | _]}, column_name) when is_map(first_row) and is_binary(column_name) do
+    fn row -> Map.get(row, column_name) end
+  end
+  def value_fn(%Dataset{data: [first_row | _]}, column_name) when is_map(first_row) and is_atom(column_name) do
+    fn row -> Map.get(row, column_name) end
+  end
+
+  def value_fn(%Dataset{data: [first_row | _]}=dataset, column_name) when is_list(first_row) do
+    column_index = column_index(dataset, column_name)
+    fn row -> Enum.at(row, column_index, nil) end
+  end
+
+  def value_fn(%Dataset{data: [first_row | _]}=dataset, column_name) when is_tuple(first_row) do
+    column_index = column_index(dataset, column_name)
+    if column_index < tuple_size(first_row) do
+      fn row -> elem(row, column_index) end
+    else
+      fn _ -> nil end
+    end
+  end
 
   @doc """
   Calculates the min and max value in the specified column
   """
   @spec column_extents(Contex.Dataset.t(), column_name()) :: {any, any}
   def column_extents(%Dataset{data: data} = dataset, column_name) do
-    index = column_index(dataset, column_name)
+    accessor = value_fn(dataset, column_name)
 
     Enum.reduce(data, {nil, nil},
         fn row, {min, max} ->
-          val = value(row, index)
+          val = accessor.(row)
           {Utils.safe_min(val, min), Utils.safe_max(val, max)}
         end
     )
@@ -149,10 +173,10 @@ the size of each array or tuple in the data. If there are any issues finding a v
   """
   @spec guess_column_type(Contex.Dataset.t(), column_name()) :: column_type()
   def guess_column_type(%Dataset{data: data} = dataset, column_name) do
-    index = column_index(dataset, column_name)
+    accessor = value_fn(dataset, column_name)
 
     Enum.reduce_while(data, nil, fn row, _result ->
-      val = value(row, index)
+      val = accessor.(row)
       case evaluate_type(val) do
         {:ok, type} -> {:halt, type}
         _ -> {:cont, nil}
@@ -161,18 +185,30 @@ the size of each array or tuple in the data. If there are any issues finding a v
   end
 
   @doc false
-  @spec check_column_names(Contex.Dataset.t(), list(column_name()) | column_name()) ::{:ok, []} | {:error, list(column_name())}
+  @spec check_column_names(Contex.Dataset.t(), list(column_name()) | column_name()) ::{:ok} | {:error, list(column_name())}
   def check_column_names(%Dataset{}= dataset, column_names) when is_list(column_names) do
      missing_columns = MapSet.difference(MapSet.new(column_names), MapSet.new(dataset.headers))
      if MapSet.size(missing_columns) > 0 do
        {:error, MapSet.to_list(missing_columns)}
      else
-       {:ok, []}
+       {:ok}
      end
    end
 
   def check_column_names(%Dataset{}=dataset, column_names) do
     check_column_names(dataset, [column_names])
+  end
+
+  @spec are_column_names_valid!(Contex.Dataset.t(), list(column_name())) :: true
+  def are_column_names_valid!(dataset, column_names) do
+    case Dataset.check_column_names(dataset, column_names) do
+      {:ok} -> true
+      {:error, missing_columns} ->
+        columns_string =
+          Stream.map(missing_columns, &("\"#{&1}\""))
+          |> Enum.join(", ")
+        raise "Column(s) #{columns_string} not in the dataset."
+    end
   end
 
   defp evaluate_type(%DateTime{}), do: {:ok, :datetime}
@@ -189,19 +225,19 @@ the size of each array or tuple in the data. If there are any issues finding a v
   """
   @spec combined_column_extents(Contex.Dataset.t(), list(column_name())) :: {any(), any()}
   def combined_column_extents(%Dataset{data: data} = dataset, column_names) do
-    indices = Enum.map(column_names, fn col -> column_index(dataset, col) end)
+    accessors = Enum.map(column_names, fn col -> value_fn(dataset, col) end)
 
     Enum.reduce(data, {nil, nil},
         fn row, {min, max} ->
-          val = sum_row_values(row, indices)
+          val = sum_row_values(row, accessors)
           {Utils.safe_min(val, min), Utils.safe_max(val, max)}
         end
     )
   end
 
-  defp sum_row_values(row, indices) do
-    Enum.reduce(indices, 0, fn index, acc ->
-      val = value(row, index)
+  defp sum_row_values(row, accessors) do
+    Enum.reduce(accessors, 0, fn accessor, acc ->
+      val = accessor.(row)
       Utils.safe_add(acc, val)
     end)
   end
@@ -214,11 +250,11 @@ the size of each array or tuple in the data. If there are any issues finding a v
   """
   @spec unique_values(Contex.Dataset.t(), String.t() | integer()) :: [any]
   def unique_values(%Dataset{data: data} = dataset, column_name) do
-    index = column_index(dataset, column_name)
+    accessor = value_fn(dataset, column_name)
 
     {result, _found} = Enum.reduce(data, {[], MapSet.new},
       fn row, {result, found} ->
-        val = value(row, index)
+        val = accessor.(row)
         case MapSet.member?(found, val) do
           true -> {result, found}
           _ -> {[val | result], MapSet.put(found, val)}

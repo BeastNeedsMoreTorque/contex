@@ -14,7 +14,7 @@ defmodule ContexDatasetTest do
   describe "new/1" do
     test "returns a Dataset struct with no headers when passed a list" do
       dataset = Dataset.new([{1, 2}, {1, 2}])
-      assert %Dataset{} = dataset 
+      assert %Dataset{} = dataset
       assert dataset.headers == nil
     end
 
@@ -27,20 +27,20 @@ defmodule ContexDatasetTest do
   describe "new/2" do
     test "returns a Dataset struct with headers when passed two lists" do
       dataset = Dataset.new([{1, 2}, {1, 2}], ["x", "y"])
-      assert %Dataset{} = dataset 
-      assert dataset.headers == ["x", "y"] 
+      assert %Dataset{} = dataset
+      assert dataset.headers == ["x", "y"]
     end
 
     test "raises when not passed two lists" do
-      data = {{1, 2}, {1, 2}} 
+      data = {{1, 2}, {1, 2}}
       headers = {"x", "y"}
       assert_raise FunctionClauseError, fn -> Dataset.new(data, headers) end
 
-      data = [{1, 2}, {1, 2}] 
+      data = [{1, 2}, {1, 2}]
       headers = {"x", "y"}
       assert_raise FunctionClauseError, fn -> Dataset.new(data, headers) end
 
-      data = {{1, 2}, {1, 2}} 
+      data = {{1, 2}, {1, 2}}
       headers = ["x", "y"]
       assert_raise FunctionClauseError, fn -> Dataset.new(data, headers) end
     end
@@ -48,7 +48,7 @@ defmodule ContexDatasetTest do
 
   describe "column_index/2"do
     test "returns nil if dataset has no headers", %{dataset_nocols: dataset_nocols} do
-      assert Dataset.column_index(dataset_nocols, "bb") == nil 
+      assert Dataset.column_index(dataset_nocols, "bb") == nil
     end
 
     test "returns index of header value in headers list if it exists", %{dataset: dataset} do
@@ -56,27 +56,36 @@ defmodule ContexDatasetTest do
     end
 
     test "returns nil if header not in list", %{dataset: dataset} do
-      assert Dataset.column_index(dataset, "bbb") == nil 
+      assert Dataset.column_index(dataset, "bbb") == nil
     end
   end
 
   describe "value/2" do
     test "returns right value from data with no headers", %{dataset_nocols: dataset_nocols} do
       [row1 | _] = dataset_nocols.data
-      assert Dataset.value(row1, 0) == 1
+      accessor = Dataset.value_fn(dataset_nocols, 0)
+      assert accessor.(row1) == 1
+
+      assert Dataset.value(dataset_nocols, row1, 0) == 1
     end
 
     test "returns nil from data with no headers if row doesn't exist", %{dataset_nocols: dataset_nocols} do
       [row1 | _] = dataset_nocols.data
-      assert Dataset.value(row1, 10) == nil
+      accessor = Dataset.value_fn(dataset_nocols, 10)
+      assert accessor.(row1) == nil
+
+      assert Dataset.value(dataset_nocols, row1, 10) == nil
     end
 
     test "return correct value from data with headers", %{dataset_nocols: dataset_nocols, dataset: dataset} do
       [row1 | _] = dataset_nocols.data
-      assert Dataset.value(row1, Dataset.column_index(dataset, "cccc")) == 3
+      accessor = Dataset.value_fn(dataset, "cccc")
+      assert accessor.(row1) == 3
+
+      assert Dataset.value(dataset, row1, "cccc") == 3
     end
   end
-      
+
   describe "column_extents/2" do
     test "returns appropriate boundary values for given column header", %{dataset: dataset} do
       assert Dataset.column_extents(dataset, "bb") == {-2, 5}

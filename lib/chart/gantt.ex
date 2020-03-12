@@ -79,9 +79,7 @@ defstruct [:dataset, :width, :height, :category_col, :task_col, :show_task_label
   @spec set_category_task_cols(Contex.GanttChart.t(), Contex.Dataset.column_name(), Contex.Dataset.column_name()) ::
           Contex.GanttChart.t()
   def set_category_task_cols(%GanttChart{dataset: dataset, height: height, padding: padding} = plot, cat_col_name, task_col_name) do
-    with {:ok, []} <- Dataset.check_column_names(plot.dataset, cat_col_name),
-         {:ok, []} <- Dataset.check_column_names(plot.dataset, task_col_name) do
-
+    if Dataset.are_column_names_valid!(plot.dataset, [cat_col_name, task_col_name]) do
       tasks = Dataset.unique_values(dataset, task_col_name)
       categories = Dataset.unique_values(dataset, cat_col_name)
 
@@ -93,8 +91,7 @@ defstruct [:dataset, :width, :height, :category_col, :task_col, :show_task_label
 
       %{plot | category_col: cat_col_name, task_col: task_col_name , task_scale: task_scale, category_scale: cat_scale}
     else
-      {:error, missing_column} ->
-      raise "Column \"#{missing_column}\" not in the dataset."
+      IO.inspect "boo hoo"
     end
   end
 
@@ -104,8 +101,7 @@ defstruct [:dataset, :width, :height, :category_col, :task_col, :show_task_label
   @spec set_task_interval_cols(Contex.GanttChart.t(), {Contex.Dataset.column_name(), Contex.Dataset.column_name()}) ::
           Contex.GanttChart.t()
   def set_task_interval_cols(%GanttChart{dataset: dataset, width: width} = plot, {start_col, end_col}) do
-    with {:ok, []} <- Dataset.check_column_names(plot.dataset, start_col),
-         {:ok, []} <- Dataset.check_column_names(plot.dataset, end_col) do
+    if Dataset.are_column_names_valid!(plot.dataset, [start_col, end_col]) do
       {min, _} = Dataset.column_extents(dataset, start_col)
       {_, max} = Dataset.column_extents(dataset, end_col)
 
@@ -114,9 +110,6 @@ defstruct [:dataset, :width, :height, :category_col, :task_col, :show_task_label
         |> Scale.set_range(0, width)
 
       %{plot | interval_cols: {start_col, end_col}, time_scale: time_scale}
-    else
-      {:error, missing_column} ->
-      raise "Column \"#{missing_column}\" not in the dataset."
     end
   end
 
@@ -135,14 +128,8 @@ defstruct [:dataset, :width, :height, :category_col, :task_col, :show_task_label
   """
   @spec set_id_col(Contex.GanttChart.t(), Contex.Dataset.column_name()) :: Contex.GanttChart.t()
   def set_id_col(%GanttChart{}=plot, id_col_name) do
-    case Dataset.check_column_names(plot.dataset, id_col_name) do
-      {:ok, []} ->
-        %{plot | id_col: id_col_name}
-
-      {:error, missing_column} ->
-        raise "Column \"#{missing_column}\" not in the dataset."
-
-      _ -> plot
+    if Dataset.are_column_names_valid!(plot.dataset, id_col_name) do
+      %{plot | id_col: id_col_name}
     end
   end
 
@@ -193,20 +180,20 @@ defstruct [:dataset, :width, :height, :category_col, :task_col, :show_task_label
   end
 
   defp get_svg_bars(%GanttChart{dataset: dataset, task_col: task_col, category_col: cat_col, interval_cols: {start_col, end_col}} = plot) do
-    task_col_index = Dataset.column_index(dataset, task_col)
-    cat_col_index = Dataset.column_index(dataset, cat_col)
-    start_col_index = Dataset.column_index(dataset, start_col)
-    end_col_index = Dataset.column_index(dataset, end_col)
+    task_col_accessor = Dataset.value_fn(dataset, task_col)
+    cat_col_accessor = Dataset.value_fn(dataset, cat_col)
+    start_col_accessor = Dataset.value_fn(dataset, start_col)
+    end_col_accessor = Dataset.value_fn(dataset, end_col)
 
     dataset.data
-    |> Enum.map(fn row -> get_svg_bar(row, plot, task_col_index, cat_col_index, start_col_index, end_col_index) end)
+    |> Enum.map(fn row -> get_svg_bar(row, plot, task_col_accessor, cat_col_accessor, start_col_accessor, end_col_accessor) end)
   end
 
-  defp get_svg_bar(row, %GanttChart{task_scale: task_scale, time_scale: time_scale, category_scale: cat_scale}=plot, task_col_index, cat_col_index, start_col_index, end_col_index) do
-    task_data = Dataset.value(row, task_col_index)
-    cat_data = Dataset.value(row, cat_col_index)
-    start_time = Dataset.value(row, start_col_index)
-    end_time = Dataset.value(row, end_col_index)
+  defp get_svg_bar(row, %GanttChart{task_scale: task_scale, time_scale: time_scale, category_scale: cat_scale}=plot, task_col_accessor, cat_col_accessor, start_col_accessor, end_col_accessor) do
+    task_data = task_col_accessor.(row)
+    cat_data = cat_col_accessor.(row)
+    start_time = start_col_accessor.(row)
+    end_time = end_col_accessor.(row)
     title = ~s|#{task_data}: #{start_time} -> #{end_time}|
 
     task_band = OrdinalScale.get_band(task_scale, task_data)
@@ -239,20 +226,20 @@ defstruct [:dataset, :width, :height, :category_col, :task_col, :show_task_label
     [category: "#{category}", task: task, phx_click: phx_event_handler]
   end
   defp get_bar_event_handler_opts(row, %GanttChart{phx_event_handler: phx_event_handler, id_col: id_col, dataset: dataset}, _category, _task) when is_binary(phx_event_handler) and phx_event_handler != "" do
-    id_col_index = Dataset.column_index(dataset, id_col)
-    id = Dataset.value(row, id_col_index)
+    #id_col_index = Dataset.column_index(dataset, id_col)
+    id = Dataset.value(dataset, row, id_col)
 
     [id: "#{id}", phx_click: phx_event_handler]
   end
   defp get_bar_event_handler_opts(_row, %GanttChart{}=_plot, _category, _task), do: []
 
   defp get_category_band(%GanttChart{task_scale: task_scale, dataset: dataset}=plot, category) do
-    task_col_index = Dataset.column_index(dataset, plot.task_col)
-    cat_col_index = Dataset.column_index(dataset, plot.category_col)
+    task_col_accessor = Dataset.value_fn(dataset, plot.task_col)
+    cat_col_accessor = Dataset.value_fn(dataset, plot.category_col)
 
     Enum.reduce(dataset.data, {nil, nil}, fn row, {min, max}=acc ->
-      task = Dataset.value(row, task_col_index)
-      cat = Dataset.value(row, cat_col_index)
+      task = task_col_accessor.(row)
+      cat = cat_col_accessor.(row)
       case cat == category do
         false -> {min, max}
         _ ->

@@ -124,7 +124,7 @@ defmodule ContexPointPlotTest do
     test "raises when given column is not in the dataset", %{plot: plot} do
       assert_raise(
         RuntimeError,
-        "Column \"Wrong Series\" not in the dataset.",
+        "Column(s) \"Wrong Series\" not in the dataset.",
         fn ->
           PointPlot.set_x_col_name(plot, "Wrong Series")
         end
@@ -168,7 +168,7 @@ defmodule ContexPointPlotTest do
     test "raises when given column is not in the dataset", %{plot: plot} do
       assert_raise(
         RuntimeError,
-        "Column \"Wrong Series\" not in the dataset.",
+        "Column(s) \"Wrong Series\" not in the dataset.",
         fn ->
           PointPlot.set_colour_col_name(plot, "Wrong Series")
         end

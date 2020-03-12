@@ -248,20 +248,20 @@ shown. You can force the range using `force_value_range/2`
   end
 
   defp get_svg_bars(%BarChart{dataset: dataset} = plot) do
-    cat_col_index = Dataset.column_index(dataset, plot.category_col)
+    cat_col_accessor = Dataset.value_fn(dataset, plot.category_col)
 
-    val_col_indices = Enum.map(plot.value_cols, fn col -> Dataset.column_index(dataset, col) end)
+    val_col_accessors = Enum.map(plot.value_cols, fn col -> Dataset.value_fn(dataset, col) end)
 
     series_fill_colours = plot.series_fill_colours
     fills = Enum.map(plot.value_cols, fn column -> CategoryColourScale.colour_for_value(series_fill_colours, column) end)
 
     dataset.data
-    |> Enum.map(fn row -> get_svg_bar(row, plot, cat_col_index, val_col_indices, fills) end)
+    |> Enum.map(fn row -> get_svg_bar(row, plot, cat_col_accessor, val_col_accessors, fills) end)
   end
 
-  defp get_svg_bar(row, %BarChart{category_scale: category_scale, value_scale: value_scale}=plot, cat_col_index, val_col_indices, fills) do
-    cat_data = Dataset.value(row, cat_col_index)
-    series_values = Enum.map(val_col_indices, fn index -> Dataset.value(row, index) end)
+  defp get_svg_bar(row, %BarChart{category_scale: category_scale, value_scale: value_scale}=plot, cat_col_accessor, val_col_accessors, fills) do
+    cat_data = cat_col_accessor.(row)
+    series_values = Enum.map(val_col_accessors, fn accessor -> accessor.(row) end)
 
     cat_band = OrdinalScale.get_band(category_scale, cat_data)
     bar_values = prepare_bar_values(series_values, value_scale, plot.type)
@@ -378,24 +378,19 @@ shown. You can force the range using `force_value_range/2`
     text(text_x, text_y, label, text_anchor: "middle", class: class)
   end
 
+  @spec set_cat_col_name(Contex.BarChart.t(), binary | integer) :: Contex.BarChart.t()
   @doc """
   Sets the category column name. This must exist in the dataset.
 
   This provides the labels for each bar or group of bars
   """
   def set_cat_col_name(%BarChart{padding: padding} = plot, cat_col_name) do
-    case Dataset.check_column_names(plot.dataset, cat_col_name) do
-      {:ok, []} ->
-        categories = Dataset.unique_values(plot.dataset, cat_col_name)
-        {r_min, r_max} = get_range(:category, plot)
-        cat_scale = OrdinalScale.new(categories) |> Scale.set_range(r_min, r_max) |> OrdinalScale.padding(padding)
+    if Dataset.are_column_names_valid!(plot.dataset, [cat_col_name]) do
+      categories = Dataset.unique_values(plot.dataset, cat_col_name)
+      {r_min, r_max} = get_range(:category, plot)
+      cat_scale = OrdinalScale.new(categories) |> Scale.set_range(r_min, r_max) |> OrdinalScale.padding(padding)
 
-        %{plot | category_col: cat_col_name, category_scale: cat_scale}
-
-      {:error, missing_column} ->
-        raise "Column \"#{missing_column}\" not in the dataset."
-
-      _ -> plot
+      %{plot | category_col: cat_col_name, category_scale: cat_scale}
     end
   end
 
@@ -405,29 +400,20 @@ shown. You can force the range using `force_value_range/2`
   This provides the value for each bar.
   """
   def set_val_col_names(%BarChart{} = plot, val_col_names) when is_list(val_col_names) do
-    case Dataset.check_column_names(plot.dataset, val_col_names) do
-      {:ok, []} ->
-        {min, max} =
-          get_overall_value_domain(plot, plot.dataset, val_col_names, plot.type)
-          |> Utils.fixup_value_range()
+    if (Dataset.are_column_names_valid!(plot.dataset, val_col_names) == true) do
+      {min, max} =
+        get_overall_value_domain(plot, plot.dataset, val_col_names, plot.type)
+        |> Utils.fixup_value_range()
 
-        {r_start, r_end} = get_range(:value, plot)
+      {r_start, r_end} = get_range(:value, plot)
 
-        val_scale = ContinuousLinearScale.new() |> ContinuousLinearScale.domain(min, max) |> Scale.set_range(r_start, r_end)
+      val_scale = ContinuousLinearScale.new() |> ContinuousLinearScale.domain(min, max) |> Scale.set_range(r_start, r_end)
 
-        series_fill_colours
-          = CategoryColourScale.new(val_col_names)
-          |> CategoryColourScale.set_palette(plot.colour_palette)
+      series_fill_colours
+        = CategoryColourScale.new(val_col_names)
+        |> CategoryColourScale.set_palette(plot.colour_palette)
 
-        %{plot | value_cols: val_col_names, value_scale: val_scale, series_fill_colours: series_fill_colours}
-
-      {:error, missing_columns} ->
-        columns_string =
-          Stream.map(missing_columns, &("\"#{&1}\""))
-          |> Enum.join(", ")
-        raise "Column(s) #{columns_string} not in the dataset."
-
-      _ -> plot
+      %{plot | value_cols: val_col_names, value_scale: val_scale, series_fill_colours: series_fill_colours}
     end
   end
 

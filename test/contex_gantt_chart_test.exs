@@ -54,7 +54,7 @@ defmodule ContexGanttChartTest do
     test "raises when given column is not in the dataset", %{plot: plot} do
       assert_raise(
         RuntimeError,
-        "Column \"Wrong Series\" not in the dataset.",
+        "Column(s) \"Wrong Series\" not in the dataset.",
         fn ->
           GanttChart.set_category_task_cols(plot, "Wrong Series", "Task")
         end
@@ -71,7 +71,7 @@ defmodule ContexGanttChartTest do
     test "raises when given column is not in the dataset", %{plot: plot} do
       assert_raise(
         RuntimeError,
-        "Column \"Wrong Series\" not in the dataset.",
+        "Column(s) \"Wrong Series\" not in the dataset.",
         fn ->
           GanttChart.set_task_interval_cols(plot, {"End", "Wrong Series"})
         end
@@ -95,7 +95,7 @@ defmodule ContexGanttChartTest do
     test "raises when given column is not in the dataset", %{plot: plot} do
       assert_raise(
         RuntimeError,
-        "Column \"Wrong Series\" not in the dataset.",
+        "Column(s) \"Wrong Series\" not in the dataset.",
         fn ->
           GanttChart.set_id_col(plot, "Wrong Series")
         end

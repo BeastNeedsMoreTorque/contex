@@ -133,20 +133,20 @@ A column in the dataset can optionally be used to control the colours. See
     x_tx_fn = Scale.domain_to_range_fn(x_scale)
     y_tx_fn = Scale.domain_to_range_fn(y_scale)
 
-    x_col_index = Dataset.column_index(dataset, plot.x_col)
-    y_col_indices = Enum.map(plot.y_cols, fn col -> Dataset.column_index(dataset, col) end)
+    x_col_accessor = Dataset.value_fn(dataset, plot.x_col)
+    y_col_accessors = Enum.map(plot.y_cols, fn col -> Dataset.value_fn(dataset, col) end)
 
-    fill_col_index = Dataset.column_index(dataset, plot.fill_col)
+    fill_col_accessor = Dataset.value_fn(dataset, plot.fill_col)
 
     dataset.data
     |> Enum.map(fn row ->
-      get_svg_point(row, x_tx_fn, y_tx_fn, plot.fill_scale, x_col_index, y_col_indices, fill_col_index)
+      get_svg_point(row, x_tx_fn, y_tx_fn, plot.fill_scale, x_col_accessor, y_col_accessors, fill_col_accessor)
     end)
   end
 
   defp get_svg_line(%PointPlot{dataset: dataset, x_scale: x_scale, y_scale: y_scale} = plot) do
-    x_col_index = Dataset.column_index(dataset, plot.x_col)
-    y_col_index = Dataset.column_index(dataset, plot.y_col)
+    x_col_accessor = Dataset.value_fn(dataset, plot.x_col)
+    y_col_accessor = Dataset.value_fn(dataset, plot.y_col)
     x_tx_fn = Scale.domain_to_range_fn(x_scale)
     y_tx_fn = Scale.domain_to_range_fn(y_scale)
 
@@ -156,8 +156,8 @@ A column in the dataset can optionally be used to control the colours. See
     path = ["M",
         dataset.data
          |> Stream.map(fn row ->
-              x = Dataset.value(row, x_col_index)
-              y = Dataset.value(row, y_col_index)
+              x = x_col_accessor.(row)
+              y = y_col_accessor.(row)
               {x_tx_fn.(x), y_tx_fn.(y)}
             end)
          |> Stream.with_index()
@@ -173,14 +173,13 @@ A column in the dataset can optionally be used to control the colours. See
   end
 
 
-  defp get_svg_point(row, x_tx_fn, y_tx_fn, fill_scale, x_col_index, [y_col_index]=y_col_indices, fill_col_index) when length(y_col_indices) == 1 do
-    x_data = Dataset.value(row, x_col_index)
-    y_data = Dataset.value(row, y_col_index)
+  defp get_svg_point(row, x_tx_fn, y_tx_fn, fill_scale, x_col_accessor, [y_col_accessor]=y_col_accessors, fill_col_accessor) when length(y_col_accessors) == 1 do
+    x_data = x_col_accessor.(row)
+    y_data = y_col_accessor.(row)
 
-    fill_data = if is_integer(fill_col_index) and fill_col_index >= 0 do
-      Dataset.value(row, fill_col_index)
-    else
-      0
+    fill_data = case fill_col_accessor.(row) do
+      nil -> 0
+      val -> val
     end
 
     x = x_tx_fn.(x_data)
@@ -190,13 +189,13 @@ A column in the dataset can optionally be used to control the colours. See
     get_svg_point(x, y, fill)
   end
 
-  defp get_svg_point(row, x_tx_fn, y_tx_fn, fill_scale, x_col_index, y_col_indices, _fill_col_index) do
-    x_data = Dataset.value(row, x_col_index)
+  defp get_svg_point(row, x_tx_fn, y_tx_fn, fill_scale, x_col_accessor, y_col_accessors, _fill_col_index) do
+    x_data = x_col_accessor.(row)
     x = x_tx_fn.(x_data)
 
-    Enum.with_index(y_col_indices)
-    |> Enum.map(fn {col_index, index} ->
-      y_data = Dataset.value(row, col_index)
+    Enum.with_index(y_col_accessors)
+    |> Enum.map(fn {accessor, index} ->
+      y_data = accessor.(row)
       y = y_tx_fn.(y_data)
       fill = CategoryColourScale.colour_for_value(fill_scale, index)
       get_svg_point(x, y, fill)
@@ -215,15 +214,9 @@ A column in the dataset can optionally be used to control the colours. See
   """
   @spec set_x_col_name(Contex.PointPlot.t(), Contex.Dataset.column_name()) :: Contex.PointPlot.t()
   def set_x_col_name(%PointPlot{width: width} = plot, x_col_name) do
-    case Dataset.check_column_names(plot.dataset, x_col_name) do
-      {:ok, []} ->
-        x_scale = create_scale_for_column(plot.dataset, x_col_name, {0, width})
-        %{plot | x_col: x_col_name, x_scale: x_scale}
-
-      {:error, missing_column} ->
-        raise "Column \"#{hd(missing_column)}\" not in the dataset."
-
-      _ -> plot
+    if Dataset.are_column_names_valid!(plot.dataset, x_col_name) do
+      x_scale = create_scale_for_column(plot.dataset, x_col_name, {0, width})
+      %{plot | x_col: x_col_name, x_scale: x_scale}
     end
   end
 
@@ -237,31 +230,22 @@ A column in the dataset can optionally be used to control the colours. See
   """
   @spec set_y_col_names(Contex.PointPlot.t(), [Contex.Dataset.column_name()]) :: Contex.PointPlot.t()
   def set_y_col_names(%PointPlot{height: height} = plot, y_col_names) when is_list(y_col_names) do
-    case Dataset.check_column_names(plot.dataset, y_col_names) do
-      {:ok, []} ->
-        {min, max} =
-          get_overall_domain(plot.dataset, y_col_names)
-          |> Utils.fixup_value_range()
+    if Dataset.are_column_names_valid!(plot.dataset, y_col_names) do
+      {min, max} =
+        get_overall_domain(plot.dataset, y_col_names)
+        |> Utils.fixup_value_range()
 
-        y_scale = ContinuousLinearScale.new()
-          |> ContinuousLinearScale.domain(min, max)
-          |> Scale.set_range(height, 0)
+      y_scale = ContinuousLinearScale.new()
+        |> ContinuousLinearScale.domain(min, max)
+        |> Scale.set_range(height, 0)
 
-        fill_indices = Enum.with_index(y_col_names) |> Enum.map(fn {_, index} -> index end)
+      fill_indices = Enum.with_index(y_col_names) |> Enum.map(fn {_, index} -> index end)
 
-        series_fill_colours
-          = CategoryColourScale.new(fill_indices)
-          |> CategoryColourScale.set_palette(plot.colour_palette)
+      series_fill_colours
+        = CategoryColourScale.new(fill_indices)
+        |> CategoryColourScale.set_palette(plot.colour_palette)
 
-        %{plot | y_cols: y_col_names, y_scale: y_scale, fill_scale: series_fill_colours}
-
-      {:error, missing_columns} ->
-        columns_string =
-          Stream.map(missing_columns, &("\"#{&1}\""))
-          |> Enum.join(", ")
-        raise "Column(s) #{columns_string} not in the dataset."
-
-      _ -> plot
+      %{plot | y_cols: y_col_names, y_scale: y_scale, fill_scale: series_fill_colours}
     end
   end
 
@@ -296,17 +280,11 @@ A column in the dataset can optionally be used to control the colours. See
   """
   @spec set_colour_col_name(Contex.PointPlot.t(), Contex.Dataset.column_name()) :: Contex.PointPlot.t()
   def set_colour_col_name(%PointPlot{} = plot, colour_col_name) do
-    case Dataset.check_column_names(plot.dataset, colour_col_name) do
-      {:ok, []} ->
-        vals = Dataset.unique_values(plot.dataset, colour_col_name)
-        colour_scale = CategoryColourScale.new(vals)
+    if Dataset.are_column_names_valid!(plot.dataset, colour_col_name) do
+      vals = Dataset.unique_values(plot.dataset, colour_col_name)
+      colour_scale = CategoryColourScale.new(vals)
 
-        %{plot | fill_col: colour_col_name, fill_scale: colour_scale}
-
-      {:error, missing_column} ->
-        raise "Column \"#{hd(missing_column)}\" not in the dataset."
-
-      _ -> plot
+      %{plot | fill_col: colour_col_name, fill_scale: colour_scale}
     end
   end
 
